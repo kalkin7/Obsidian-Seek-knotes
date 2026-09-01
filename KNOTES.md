@@ -17,7 +17,7 @@ The W1/W3 changes are published as the BRAT-compatible GitHub Release `1.1.4`:
 - Release assets: `main.js`, `manifest.json`, and `styles.css`
 - BRAT: **Add Beta plugin** → `kalkin7/Obsidian-Seek-knotes`
 
-The source branch is `knotes`; generated `main.js` remains a release/build artifact and is not tracked in Git. The default `main` branch now carries the active tag-release workflow (`6e94ef4`), so future semver tag pushes from `knotes` publish releases automatically. Release `1.1.4` predates that workflow and was published manually.
+The source branch is `knotes`; generated `main.js` remains a release/build artifact and is not tracked in Git. The default `main` branch now carries the active tag-release workflow (`2f4be6a`, synchronized on `knotes` as `e065bea`), so future semver tag pushes from `knotes` publish releases automatically. Release `1.1.4` predates that workflow and was published manually.
 
 ## Rebase cookbook
 

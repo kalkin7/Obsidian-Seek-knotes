@@ -528,7 +528,7 @@ function parseFrontmatter(yaml: string): Record<string, unknown> {
             let j = i + 1;
             while (j < lines.length) {
                 const next = lines[j];
-                const listM = /^\s+-\s*(.+)$/.exec(next);
+                const listM = /^\s+-\s*(.+)\r?$/.exec(next);
                 if (!listM) break;
                 items.push(stripQuotes(listM[1].trim()));
                 j++;

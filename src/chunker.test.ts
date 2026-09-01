@@ -681,3 +681,19 @@ describe('MarkdownChunker — list-valued properties stored for the matcher (v10
         expect(chunk.metadata.aliases).toEqual(['B']);
     });
 });
+
+describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
+    const body = 'A body paragraph long enough to clear the minimum chunk gate for this test note.';
+
+    it('parses CRLF block-list aliases without retaining carriage returns', () => {
+        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\r\n');
+        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
+        expect(chunk.metadata.aliases).toContain('엘지유플러스');
+    });
+
+    it('keeps LF block-list aliases working', () => {
+        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\n');
+        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
+        expect(chunk.metadata.aliases).toContain('엘지유플러스');
+    });
+});

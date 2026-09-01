@@ -1,56 +1,61 @@
 name: Release
 
-# Obsidian's installer (and BRAT) install a plugin by pulling the GitHub Release
-# whose tag EXACTLY matches manifest.json "version" (no leading "v"), with
-# main.js / manifest.json / styles.css attached as individual assets.
+# The workflow is kept on the repository default branch so GitHub registers it
+# for tag pushes from the knotes release branch. The tag must exactly match
+# manifest.json.version (for example, 1.1.4; no leading v).
 #
-# Cut a release from this repo with:
-#   npm version patch        # bumps manifest + versions.json, commits, tags
-#   git push --follow-tags   # pushes the tag -> fires this workflow
+# Release flow:
+#   npm version patch --no-git-tag-version
+#   git add package.json manifest.json versions.json
+#   git commit -m "chore: bump version"
+#   git tag <version>
+#   git push origin knotes --tags
 
 on:
   push:
     tags:
-      - "*"
+      - "[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
   contents: write
-  # Provenance attestation: id-token mints the OIDC token Sigstore signs the
-  # build with; attestations lets the run record it against the repo. Users can
-  # then `gh attestation verify main.js --repo ryan-manor/Obsidian-Seek`.
-  id-token: write
-  attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22.x"
           cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
       - name: Build plugin
+        run: npm run build
+
+      - name: Verify tag and manifest version
+        shell: bash
         run: |
-          npm ci
-          npm run build
-      # Attest the assets actually built in THIS run, so the provenance binds to
-      # the published bytes. Requires the release to ship the CI build (push the
-      # tag, let this draft, then publish it) — not a locally-built upload.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            main.js
-            styles.css
-      - name: Create draft release
+          tag="${GITHUB_REF_NAME}"
+          version="$(node -p "require('./manifest.json').version")"
+          if [[ "$tag" != "$version" ]]; then
+            echo "Tag $tag does not match manifest version $version" >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          # Drop --draft below to publish automatically instead of reviewing first.
-          gh release create "$tag" \
-            --title "$tag" \
-            --draft \
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
             --generate-notes \
             main.js manifest.json styles.css

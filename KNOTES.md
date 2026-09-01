@@ -1,6 +1,6 @@
 # K_Notes Seek fork
 
-This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek` and upstream version `1.1.3`.
+This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek`; the current K_Notes release is `1.1.4`.
 
 Remotes:
 
@@ -8,6 +8,16 @@ Remotes:
 - `upstream` = `https://github.com/ryan-manor/Obsidian-Seek.git` (official Seek)
 
 Work on `knotes`. Do not open a PR to upstream unless that is an explicit later decision. Do not install this fork over production K_Notes Seek.
+
+## Release 1.1.4
+
+The W1/W3 changes are published as the BRAT-compatible GitHub Release `1.1.4`:
+
+- `https://github.com/kalkin7/Obsidian-Seek-knotes`
+- Release assets: `main.js`, `manifest.json`, and `styles.css`
+- BRAT: **Add Beta plugin** → `kalkin7/Obsidian-Seek-knotes`
+
+The source branch is `knotes`; generated `main.js` remains a release/build artifact and is not tracked in Git.
 
 ## Rebase cookbook
 
@@ -56,7 +66,7 @@ Do **not** install or copy this fork over the production K_Notes Seek plugin at:
 C:\Cloud\GoogleDrive(HSC)\2_Areas\Apps\Obsidian\Vault\K_Notes\.obsidian\plugins\seek\
 ```
 
-This track is unit-test-only and does not run live vault search. When a test vault is available on the appropriate machine, the later confirmation queries are:
+The 1.1.4 source and build were verified, and the isolated test-vault live checks passed. Production K_Notes was not overwritten. The confirmation queries used were:
 
 ```text
 엘지유플러스

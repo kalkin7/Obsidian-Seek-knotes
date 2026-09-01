@@ -1,12 +1,15 @@
 name: Release
 
-# Obsidian's installer (and BRAT) install a plugin by pulling the GitHub Release
-# whose tag EXACTLY matches manifest.json "version" (no leading "v"), with
-# main.js / manifest.json / styles.css attached as individual assets.
+# Obsidian and BRAT install/update from a published GitHub Release. The
+# generated main.js is built in CI and attached together with manifest.json and
+# styles.css; it does not need to be tracked in the source repository.
 #
 # Cut a release from this repo with:
-#   npm version patch        # bumps manifest + versions.json, commits, tags
-#   git push --follow-tags   # pushes the tag -> fires this workflow
+#   npm version patch --no-git-tag-version
+#   git add package.json manifest.json versions.json
+#   git commit -m "chore: bump version"
+#   git tag <version>             # e.g. 1.1.4; must match manifest.version
+#   git push origin knotes --tags # pushes the tag -> fires this workflow
 
 on:
   push:
@@ -48,9 +51,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          # Drop --draft below to publish automatically instead of reviewing first.
           gh release create "$tag" \
             --title "$tag" \
-            --draft \
             --generate-notes \
             main.js manifest.json styles.css

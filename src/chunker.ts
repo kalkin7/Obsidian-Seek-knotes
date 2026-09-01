@@ -513,11 +513,14 @@ export class MarkdownChunker {
 // YAML parser would balloon the bundle by ~50 KB.
 function parseFrontmatter(yaml: string): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    const lines = yaml.split('\n');
+    // Obsidian files commonly use CRLF; normalize line endings before matching.
+    const lines = yaml.split(/\r?\n/);
     let i = 0;
     while (i < lines.length) {
         const line = lines[i];
-        const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+        // Obsidian property keys may use Unicode letters (including Hangul);
+        // keep the lightweight parser but accept Unicode letters/numbers.
+        const m = /^([\p{L}\p{N}_-]+):\s*(.*)\r?$/u.exec(line);
         if (!m) { i++; continue; }
         const key = m[1];
         const valueStr = m[2].trim();

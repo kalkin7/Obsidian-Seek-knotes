@@ -697,3 +697,23 @@ describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
         expect(chunk.metadata.aliases).toContain('엘지유플러스');
     });
 });
+
+describe('MarkdownChunker — Unicode frontmatter property keys (W3)', () => {
+    it('preserves Hangul keys and ASCII keys with CRLF line endings', () => {
+        const note = [
+            '---',
+            '상태: 최종 결과보고서 수령 완료',
+            '보험접수번호: "2025-9883784"',
+            'document_type: notes',
+            '---',
+            '',
+            'x'.repeat(80),
+        ].join('\r\n');
+        const [chunk] = chunker.chunkContent(note, 'Notes/W3.md');
+        expect(chunk.metadata.properties).toEqual({
+            '상태': '최종 결과보고서 수령 완료',
+            '보험접수번호': '2025-9883784',
+            document_type: 'notes',
+        });
+    });
+});

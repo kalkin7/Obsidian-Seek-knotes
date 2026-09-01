@@ -1,0 +1,50 @@
+From ef81977e1d5dca9cbfebffcc4683cfa91c00ba0d Mon Sep 17 00:00:00 2001
+From: kalkin7 <kalkin7@gmail.com>
+Date: Tue, 1 Sep 2026 11:40:45 +0900
+Subject: [PATCH 1/2] fix(chunker): parse CRLF YAML alias lists (W1)
+
+---
+ src/chunker.test.ts | 16 ++++++++++++++++
+ src/chunker.ts      |  2 +-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/src/chunker.test.ts b/src/chunker.test.ts
+index d47eab3..641dcd8 100644
+--- a/src/chunker.test.ts
++++ b/src/chunker.test.ts
+@@ -681,3 +681,19 @@ describe('MarkdownChunker — list-valued properties stored for the matcher (v10
+         expect(chunk.metadata.aliases).toEqual(['B']);
+     });
+ });
++
++describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
++    const body = 'A body paragraph long enough to clear the minimum chunk gate for this test note.';
++
++    it('parses CRLF block-list aliases without retaining carriage returns', () => {
++        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\r\n');
++        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
++        expect(chunk.metadata.aliases).toContain('엘지유플러스');
++    });
++
++    it('keeps LF block-list aliases working', () => {
++        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\n');
++        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
++        expect(chunk.metadata.aliases).toContain('엘지유플러스');
++    });
++});
+diff --git a/src/chunker.ts b/src/chunker.ts
+index feb48ea..79f0071 100644
+--- a/src/chunker.ts
++++ b/src/chunker.ts
+@@ -528,7 +528,7 @@ function parseFrontmatter(yaml: string): Record<string, unknown> {
+             let j = i + 1;
+             while (j < lines.length) {
+                 const next = lines[j];
+-                const listM = /^\s+-\s*(.+)$/.exec(next);
++                const listM = /^\s+-\s*(.+)\r?$/.exec(next);
+                 if (!listM) break;
+                 items.push(stripQuotes(listM[1].trim()));
+                 j++;
+-- 
+2.55.0.windows.3
+

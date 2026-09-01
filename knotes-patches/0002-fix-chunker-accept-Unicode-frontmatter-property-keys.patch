@@ -1,0 +1,63 @@
+From 019184639a9e05bf584edf5ff88386ac6c872a6c Mon Sep 17 00:00:00 2001
+From: kalkin7 <kalkin7@gmail.com>
+Date: Tue, 1 Sep 2026 11:41:27 +0900
+Subject: [PATCH 2/2] fix(chunker): accept Unicode frontmatter property keys
+ (W3)
+
+---
+ src/chunker.test.ts | 20 ++++++++++++++++++++
+ src/chunker.ts      |  7 +++++--
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/src/chunker.test.ts b/src/chunker.test.ts
+index 641dcd8..2b16e03 100644
+--- a/src/chunker.test.ts
++++ b/src/chunker.test.ts
+@@ -697,3 +697,23 @@ describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
+         expect(chunk.metadata.aliases).toContain('엘지유플러스');
+     });
+ });
++
++describe('MarkdownChunker — Unicode frontmatter property keys (W3)', () => {
++    it('preserves Hangul keys and ASCII keys with CRLF line endings', () => {
++        const note = [
++            '---',
++            '상태: 최종 결과보고서 수령 완료',
++            '보험접수번호: "2025-9883784"',
++            'document_type: notes',
++            '---',
++            '',
++            'x'.repeat(80),
++        ].join('\r\n');
++        const [chunk] = chunker.chunkContent(note, 'Notes/W3.md');
++        expect(chunk.metadata.properties).toEqual({
++            '상태': '최종 결과보고서 수령 완료',
++            '보험접수번호': '2025-9883784',
++            document_type: 'notes',
++        });
++    });
++});
+diff --git a/src/chunker.ts b/src/chunker.ts
+index 79f0071..40ac2c1 100644
+--- a/src/chunker.ts
++++ b/src/chunker.ts
+@@ -513,11 +513,14 @@ export class MarkdownChunker {
+ // YAML parser would balloon the bundle by ~50 KB.
+ function parseFrontmatter(yaml: string): Record<string, unknown> {
+     const result: Record<string, unknown> = {};
+-    const lines = yaml.split('\n');
++    // Obsidian files commonly use CRLF; normalize line endings before matching.
++    const lines = yaml.split(/\r?\n/);
+     let i = 0;
+     while (i < lines.length) {
+         const line = lines[i];
+-        const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
++        // Obsidian property keys may use Unicode letters (including Hangul);
++        // keep the lightweight parser but accept Unicode letters/numbers.
++        const m = /^([\p{L}\p{N}_-]+):\s*(.*)\r?$/u.exec(line);
+         if (!m) { i++; continue; }
+         const key = m[1];
+         const valueStr = m[2].trim();
+-- 
+2.55.0.windows.3
+

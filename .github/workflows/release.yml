@@ -6,7 +6,7 @@ name: Release
 #
 # Release flow:
 #   npm version patch --no-git-tag-version
-#   git add package.json manifest.json versions.json
+#   git add package.json package-lock.json manifest.json versions.json
 #   git commit -m "chore: bump version"
 #   git tag <version>
 #   git push origin knotes --tags

@@ -1,6 +1,13 @@
 # K_Notes Seek fork
 
-This repository is a local, rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek` and upstream version `1.1.3`. The only configured remote is `upstream`; do not add a GitHub `origin` or push this fork.
+This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek` and upstream version `1.1.3`.
+
+Remotes:
+
+- `origin` = `https://github.com/kalkin7/Obsidian-Seek-knotes.git` (our `knotes` branch)
+- `upstream` = `https://github.com/ryan-manor/Obsidian-Seek.git` (official Seek)
+
+Work on `knotes`. Do not open a PR to upstream unless that is an explicit later decision. Do not install this fork over production K_Notes Seek.
 
 ## Rebase cookbook
 

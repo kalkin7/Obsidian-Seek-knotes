@@ -1,0 +1,208 @@
+From 18d981121e1f9262151eef65aec05daef2c67567 Mon Sep 17 00:00:00 2001
+From: kalkin7 <kalkin7@gmail.com>
+Date: Tue, 1 Sep 2026 11:42:32 +0900
+Subject: [PATCH 3/4] docs: add KNOTES rebase cookbook and export patches
+
+---
+ KNOTES.md                                     | 60 ++++++++++++++++++
+ ...unker-parse-CRLF-YAML-alias-lists-W1.patch | 50 +++++++++++++++
+ ...pt-Unicode-frontmatter-property-keys.patch | 63 +++++++++++++++++++
+ 3 files changed, 173 insertions(+)
+ create mode 100644 KNOTES.md
+ create mode 100644 knotes-patches/0001-fix-chunker-parse-CRLF-YAML-alias-lists-W1.patch
+ create mode 100644 knotes-patches/0002-fix-chunker-accept-Unicode-frontmatter-property-keys.patch
+
+diff --git a/KNOTES.md b/KNOTES.md
+new file mode 100644
+index 0000000..218e4ff
+--- /dev/null
++++ b/KNOTES.md
+@@ -0,0 +1,60 @@
++# K_Notes Seek fork
++
++This repository is a local, rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek` and upstream version `1.1.3`. The only configured remote is `upstream`; do not add a GitHub `origin` or push this fork.
++
++## Rebase cookbook
++
++From this repository:
++
++```powershell
++Set-Location "C:\Users\manager\Dev\Obsidian-Seek-knotes"
++git fetch upstream
++git switch knotes
++git rebase upstream/main
++```
++
++The expected conflict area is `src/chunker.ts`, in `parseFrontmatter`. Preserve both parser fixes when resolving conflicts:
++
++- W1 keeps the list-item expression `^\s+-\s*(.+)\r?$` so CRLF YAML alias lists retain values such as `엘지유플러스`.
++- W3 keeps `yaml.split(/\r?\n/)` and the Unicode-key expression `^[\p{L}\p{N}_-]+:\s*(.*)\r?$` with the `u` flag, so Hangul property keys persist alongside ASCII keys.
++
++After resolving a conflict, inspect the result and continue normally:
++
++```powershell
++git add src/chunker.ts
++git rebase --continue
++```
++
++## Exporting patches
++
++After rebasing, regenerate the exported patches from the upstream baseline. Remove stale patch files first if the commit set changed, then run:
++
++```powershell
++Remove-Item .\knotes-patches\*.patch -ErrorAction SilentlyContinue
++git format-patch upstream/main --output-directory knotes-patches
++```
++
++The tracked `knotes-patches/` directory contains the W1 and W3 patches. Keep it synchronized with the commits on `knotes`; the patch files are review/export artifacts, not a second source of truth.
++
++## What the patches fix
++
++- `0001-fix-chunker-parse-CRLF-YAML-alias-lists-W1.patch` fixes CRLF block-list parsing in `parseFrontmatter`. It closes the alias-indexing hole where a note such as `8_Wiki/entities/업체_LG_U+.md` lost `엘지유플러스` from `chunk.metadata.aliases`.
++- `0002-fix-chunker-accept-Unicode-frontmatter-property-keys.patch` fixes CRLF normalization and Unicode frontmatter property keys. It keeps keys such as `상태` and `보험접수번호` in persisted `chunk.metadata.properties`, while retaining ASCII keys such as `document_type`.
++
++## Installation boundary and later live checks
++
++Do **not** install or copy this fork over the production K_Notes Seek plugin at:
++
++```text
++C:\Cloud\GoogleDrive(HSC)\2_Areas\Apps\Obsidian\Vault\K_Notes\.obsidian\plugins\seek\
++```
++
++This track is unit-test-only and does not run live vault search. When a test vault is available on the appropriate machine, the later confirmation queries are:
++
++```text
++엘지유플러스
++상태:최종 결과보고서 수령 완료
++보험접수번호:2025-9883784
++```
++
++Do not use `vault=K_Notes` or the `obsidian` search command as part of this fork's verification.
+diff --git a/knotes-patches/0001-fix-chunker-parse-CRLF-YAML-alias-lists-W1.patch b/knotes-patches/0001-fix-chunker-parse-CRLF-YAML-alias-lists-W1.patch
+new file mode 100644
+index 0000000..a64a2cb
+--- /dev/null
++++ b/knotes-patches/0001-fix-chunker-parse-CRLF-YAML-alias-lists-W1.patch
+@@ -0,0 +1,50 @@
++From ef81977e1d5dca9cbfebffcc4683cfa91c00ba0d Mon Sep 17 00:00:00 2001
++From: kalkin7 <kalkin7@gmail.com>
++Date: Tue, 1 Sep 2026 11:40:45 +0900
++Subject: [PATCH 1/2] fix(chunker): parse CRLF YAML alias lists (W1)
++
++---
++ src/chunker.test.ts | 16 ++++++++++++++++
++ src/chunker.ts      |  2 +-
++ 2 files changed, 17 insertions(+), 1 deletion(-)
++
++diff --git a/src/chunker.test.ts b/src/chunker.test.ts
++index d47eab3..641dcd8 100644
++--- a/src/chunker.test.ts
+++++ b/src/chunker.test.ts
++@@ -681,3 +681,19 @@ describe('MarkdownChunker — list-valued properties stored for the matcher (v10
++         expect(chunk.metadata.aliases).toEqual(['B']);
++     });
++ });
+++
+++describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
+++    const body = 'A body paragraph long enough to clear the minimum chunk gate for this test note.';
+++
+++    it('parses CRLF block-list aliases without retaining carriage returns', () => {
+++        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\r\n');
+++        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
+++        expect(chunk.metadata.aliases).toContain('엘지유플러스');
+++    });
+++
+++    it('keeps LF block-list aliases working', () => {
+++        const note = ['---', 'aliases:', '  - 엘지유플러스', '---', body].join('\n');
+++        const [chunk] = chunker.chunkContent(note, '8_Wiki/entities/업체_LG_U+.md');
+++        expect(chunk.metadata.aliases).toContain('엘지유플러스');
+++    });
+++});
++diff --git a/src/chunker.ts b/src/chunker.ts
++index feb48ea..79f0071 100644
++--- a/src/chunker.ts
+++++ b/src/chunker.ts
++@@ -528,7 +528,7 @@ function parseFrontmatter(yaml: string): Record<string, unknown> {
++             let j = i + 1;
++             while (j < lines.length) {
++                 const next = lines[j];
++-                const listM = /^\s+-\s*(.+)$/.exec(next);
+++                const listM = /^\s+-\s*(.+)\r?$/.exec(next);
++                 if (!listM) break;
++                 items.push(stripQuotes(listM[1].trim()));
++                 j++;
++-- 
++2.55.0.windows.3
++
+diff --git a/knotes-patches/0002-fix-chunker-accept-Unicode-frontmatter-property-keys.patch b/knotes-patches/0002-fix-chunker-accept-Unicode-frontmatter-property-keys.patch
+new file mode 100644
+index 0000000..afb501f
+--- /dev/null
++++ b/knotes-patches/0002-fix-chunker-accept-Unicode-frontmatter-property-keys.patch
+@@ -0,0 +1,63 @@
++From 019184639a9e05bf584edf5ff88386ac6c872a6c Mon Sep 17 00:00:00 2001
++From: kalkin7 <kalkin7@gmail.com>
++Date: Tue, 1 Sep 2026 11:41:27 +0900
++Subject: [PATCH 2/2] fix(chunker): accept Unicode frontmatter property keys
++ (W3)
++
++---
++ src/chunker.test.ts | 20 ++++++++++++++++++++
++ src/chunker.ts      |  7 +++++--
++ 2 files changed, 25 insertions(+), 2 deletions(-)
++
++diff --git a/src/chunker.test.ts b/src/chunker.test.ts
++index 641dcd8..2b16e03 100644
++--- a/src/chunker.test.ts
+++++ b/src/chunker.test.ts
++@@ -697,3 +697,23 @@ describe('MarkdownChunker — CRLF YAML alias lists (W1)', () => {
++         expect(chunk.metadata.aliases).toContain('엘지유플러스');
++     });
++ });
+++
+++describe('MarkdownChunker — Unicode frontmatter property keys (W3)', () => {
+++    it('preserves Hangul keys and ASCII keys with CRLF line endings', () => {
+++        const note = [
+++            '---',
+++            '상태: 최종 결과보고서 수령 완료',
+++            '보험접수번호: "2025-9883784"',
+++            'document_type: notes',
+++            '---',
+++            '',
+++            'x'.repeat(80),
+++        ].join('\r\n');
+++        const [chunk] = chunker.chunkContent(note, 'Notes/W3.md');
+++        expect(chunk.metadata.properties).toEqual({
+++            '상태': '최종 결과보고서 수령 완료',
+++            '보험접수번호': '2025-9883784',
+++            document_type: 'notes',
+++        });
+++    });
+++});
++diff --git a/src/chunker.ts b/src/chunker.ts
++index 79f0071..40ac2c1 100644
++--- a/src/chunker.ts
+++++ b/src/chunker.ts
++@@ -513,11 +513,14 @@ export class MarkdownChunker {
++ // YAML parser would balloon the bundle by ~50 KB.
++ function parseFrontmatter(yaml: string): Record<string, unknown> {
++     const result: Record<string, unknown> = {};
++-    const lines = yaml.split('\n');
+++    // Obsidian files commonly use CRLF; normalize line endings before matching.
+++    const lines = yaml.split(/\r?\n/);
++     let i = 0;
++     while (i < lines.length) {
++         const line = lines[i];
++-        const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+++        // Obsidian property keys may use Unicode letters (including Hangul);
+++        // keep the lightweight parser but accept Unicode letters/numbers.
+++        const m = /^([\p{L}\p{N}_-]+):\s*(.*)\r?$/u.exec(line);
++         if (!m) { i++; continue; }
++         const key = m[1];
++         const valueStr = m[2].trim();
++-- 
++2.55.0.windows.3
++
+-- 
+2.55.0.windows.3
+

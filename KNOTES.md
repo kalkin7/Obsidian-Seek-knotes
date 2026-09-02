@@ -51,7 +51,7 @@ Remove-Item .\knotes-patches\*.patch -ErrorAction SilentlyContinue
 git format-patch upstream/main --output-directory knotes-patches
 ```
 
-The tracked `knotes-patches/` directory contains the W1 and W3 patches. Keep it synchronized with the commits on `knotes`; the patch files are review/export artifacts, not a second source of truth.
+The tracked `knotes-patches/` directory contains the W1/W3 parser patches and the custom sidecar-path patches (`0005`/`0006`). Keep it synchronized with the commits on `knotes`; the patch files are review/export artifacts, not a second source of truth.
 
 ## What the patches fix
 
@@ -95,4 +95,4 @@ npm version patch
 git push origin knotes --follow-tags
 ```
 
-The tag starts `.github/workflows/release.yml`, which publishes the release automatically after CI tests and builds the three assets. Verify the release assets, then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.
+The tag starts `.github/workflows/release.yml`, which publishes the release automatically after CI tests and builds the three assets. If a tag push does not create a run, start the same workflow manually with `gh workflow run Release --ref <version>`. Verify the release assets, then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.

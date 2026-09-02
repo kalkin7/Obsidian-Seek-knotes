@@ -26,6 +26,12 @@ The user guide for seek can be found [here](https://publish.obsidian.md/rmm/Seek
 2. In Seek settings, click index to let Seek scan your vault. (typically 1–3 minutes; longer for very large vaults).
 3. Open search with the **Search** command and start typing.
 
+### Custom index location
+
+To keep Seek's synced index files with other system files, open **Settings → Seek → Index → Advanced settings** and choose **Custom vault folder**. Enter a vault-relative folder such as `9_system/seek-index`, then reload Seek. Existing sidecar files are moved to the new folder when possible, without rebuilding embeddings.
+
+The path must stay inside the vault: absolute paths, `..`, and `.obsidian` (including case variants) are rejected. Use a dedicated subfolder rather than placing index files beside ordinary notes. Existing Hidden (`.obsidian`) and Vault root (`Seek Index/`) choices continue to work unchanged.
+
 ## How It Works
 
 Seek embeds your notes with a local embedding model and fuses those semantic scores with a lexical BM25 ranker. Indexing, embedding, and ranking all happens within Obsidian. Your notes and queries never leave your machine. 

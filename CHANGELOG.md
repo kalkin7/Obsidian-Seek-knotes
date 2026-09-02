@@ -2,6 +2,14 @@
 
 All notable changes to Seek are documented here. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.1.6
+
+Custom index-location release. No reindex is required when only changing the sidecar folder.
+
+### Added
+- **Custom sidecar index folder.** Choose a vault-relative destination such as `9_system/seek-index` under Settings → Seek → Index → Advanced settings. Seek validates the path, creates missing folders, and moves existing sidecar artifacts on reload when possible. Ordinary note files are never moved.
+- BRAT-compatible release assets are published with the matching `1.1.6` tag.
+
 ## 1.1.3
 
 Performance release for editing notes in a large vault, prompted by a community bug report and the diagnostics shared with it. Thank you! No reindex is needed, since the index format is unchanged.

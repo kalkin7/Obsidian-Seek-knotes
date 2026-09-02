@@ -1,6 +1,6 @@
 # K_Notes Seek fork
 
-This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek`; the current K_Notes release is `1.1.4`.
+This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek`; the current K_Notes release is `1.1.5`.
 
 Remotes:
 
@@ -95,4 +95,4 @@ npm version patch
 git push origin knotes --follow-tags
 ```
 
-The tag starts `.github/workflows/release.yml`, which creates a draft release. Review and publish that draft; then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.
+The tag starts `.github/workflows/release.yml`, which publishes the release automatically after CI tests and builds the three assets. Verify the release assets, then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.

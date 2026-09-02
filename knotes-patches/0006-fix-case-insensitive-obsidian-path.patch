@@ -1,0 +1,38 @@
+From c0c8c1163cc3a848a5cd66c7ed1e00c7a6d0820c Mon Sep 17 00:00:00 2001
+From: kalkin7 <kalkin7@gmail.com>
+Date: Wed, 2 Sep 2026 14:13:56 +0900
+Subject: [PATCH] fix: reject case variants of obsidian path
+
+---
+ src/sidecar-path.test.ts | 1 +
+ src/sidecar-path.ts      | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/sidecar-path.test.ts b/src/sidecar-path.test.ts
+index e437adc..8484dfa 100644
+--- a/src/sidecar-path.test.ts
++++ b/src/sidecar-path.test.ts
+@@ -19,6 +19,7 @@ describe('parseSidecarCustomPath', () => {
+         '//server/share',
+         'C:\\outside',
+         '.obsidian/custom',
++        '.Obsidian/custom',
+         '9_system:bad',
+         '9_system\0bad',
+     ])('rejects unsafe path %j', path => {
+diff --git a/src/sidecar-path.ts b/src/sidecar-path.ts
+index 0186995..cbef0fc 100644
+--- a/src/sidecar-path.ts
++++ b/src/sidecar-path.ts
+@@ -31,7 +31,7 @@ export function parseSidecarCustomPath(value: unknown): string | null {
+     // A custom path is the visible-vault escape hatch. Keep .obsidian behind
+     // the explicit built-in `config` choice so split-config Sync semantics do
+     // not silently return through the custom setting.
+-    return first === '.obsidian' ? null : normalized;
++    return first.toLowerCase() === '.obsidian' ? null : normalized;
+ }
+ 
+ /** Resolve a persisted location, with malformed runtime data safely on config. */
+-- 
+2.55.0.windows.3
+

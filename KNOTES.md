@@ -1,6 +1,6 @@
 # K_Notes Seek fork
 
-This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek`; the current K_Notes release is `1.1.5`.
+This repository is a rebase-friendly fork of [Seek](https://github.com/ryan-manor/Obsidian-Seek) for the K_Notes integration plan. It keeps the plugin id `seek`; the current K_Notes release is `1.1.6`.
 
 Remotes:
 
@@ -78,7 +78,7 @@ Do not use `vault=K_Notes` or the `obsidian` search command as part of this fork
 
 ## Custom sidecar index folder
 
-Seek's Index settings now have a `Custom vault folder` option. Enter a vault-relative path such as `9_system/seek-index` in `sidecarIndexCustomPath`; absolute paths, `..`, and `.obsidian` are rejected. Existing `config` and `visible` choices are unchanged. The selected directory is captured on reload, and Seek moves the previous sidecar files before hydrate when possible, so changing the location does not require re-embedding. The sidecar file format and `search.ts`/`sidecar.ts` contracts are unchanged.
+Seek's Index settings now have a `Custom vault folder` option. Enter a vault-relative path such as `9_system/seek-index` in `sidecarIndexCustomPath`; absolute paths, `..`, and `.obsidian` (case-insensitive) are rejected. Existing `config` and `visible` choices are unchanged. The selected directory is captured on reload, and Seek moves the previous sidecar files before hydrate when possible, so changing the location does not require re-embedding. The sidecar file format and `search.ts`/`sidecar.ts` contracts are unchanged.
 
 This feature is intentionally isolated to `src/sidecar-path.ts` plus small hooks in `types.ts`, `settings-tab.ts`, and `main.ts`. When rebasing, resolve conflicts in those hooks while keeping upstream changes in the surrounding code. Do not hand-edit `knotes-patches/`; regenerate it from the resulting commits.
 

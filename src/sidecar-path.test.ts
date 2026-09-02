@@ -19,6 +19,7 @@ describe('parseSidecarCustomPath', () => {
         '//server/share',
         'C:\\outside',
         '.obsidian/custom',
+        '.Obsidian/custom',
         '9_system:bad',
         '9_system\0bad',
     ])('rejects unsafe path %j', path => {

@@ -31,7 +31,7 @@ export function parseSidecarCustomPath(value: unknown): string | null {
     // A custom path is the visible-vault escape hatch. Keep .obsidian behind
     // the explicit built-in `config` choice so split-config Sync semantics do
     // not silently return through the custom setting.
-    return first === '.obsidian' ? null : normalized;
+    return first.toLowerCase() === '.obsidian' ? null : normalized;
 }
 
 /** Resolve a persisted location, with malformed runtime data safely on config. */

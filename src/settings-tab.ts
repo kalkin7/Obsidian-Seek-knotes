@@ -19,6 +19,7 @@ import type SeekPlugin from './main';
 import type { IndexStats, ModelStatus } from './main';
 import type { AltOpenLocation, SidecarIndexLocation } from './types';
 import { DEFAULT_SETTINGS, MATCH_STRENGTH_MIN_NOTES } from './types';
+import { parseSidecarCustomPath } from './sidecar-path';
 import {
     getBackendOverride, setBackendOverride, isWebgpuDemoted, clearWebgpuDemoted,
     type BackendChoice,
@@ -279,16 +280,43 @@ export class SeekSettingTab extends PluginSettingTab {
         const locRoot = locList.createEl('li');
         locRoot.createEl('strong', { text: 'Vault root: ' });
         locRoot.createSpan({ text: 'a visible "Seek Index" folder will appear in your vault. Choose this only if you use Obsidian Sync with a mobile or tablet override config folder.' });
-        indexLoc.descEl.createDiv({ text: 'Takes effect after reloading Seek.' });
+        const locCustom = locList.createEl('li');
+        locCustom.createEl('strong', { text: 'Custom: ' });
+        locCustom.createSpan({ text: 'a folder you choose inside the vault, such as 9_system/seek-index. Use a dedicated folder for Seek files.' });
+        indexLoc.descEl.createDiv({ text: 'Takes effect after reloading Seek. Existing sidecar files move to the new folder when possible.' });
         indexLoc.addDropdown(dd => dd
             .addOption('config', `Hidden (.obsidian, recommended)`)
             .addOption('visible', 'Vault root (Seek Index/)')
+            .addOption('custom', 'Custom vault folder')
             .setValue(this.s.sidecarIndexLocation)
             .onChange(async v => {
                 this.s.sidecarIndexLocation = v as SidecarIndexLocation;
                 await this.save();
+                this.rerender();
                 new Notice('Seek: index location changed — reload Seek (or restart Obsidian) for it to take effect.', 8000);
             }));
+
+        if (this.s.sidecarIndexLocation === 'custom') {
+            new Setting(adv)
+                .setName('Custom index folder')
+                .setDesc('Vault-relative path only. Absolute paths, .., and .obsidian are not allowed. Saved when you leave the field.')
+                .addText(text => {
+                    text.setPlaceholder('9_system/seek-index').setValue(this.s.sidecarIndexCustomPath);
+                    text.inputEl.addEventListener('blur', () => {
+                        const normalized = parseSidecarCustomPath(text.getValue());
+                        if (!normalized) {
+                            text.setValue(this.s.sidecarIndexCustomPath);
+                            new Notice('Seek: enter a safe vault-relative folder path (for example 9_system/seek-index).', 5000);
+                            return;
+                        }
+                        if (normalized === this.s.sidecarIndexCustomPath) return;
+                        this.s.sidecarIndexCustomPath = normalized;
+                        void this.save().then(() => {
+                            new Notice('Seek: custom index folder saved — reload Seek for it to take effect.', 6000);
+                        });
+                    });
+                });
+        }
     }
 
     private renderStatusCard(containerEl: HTMLElement): void {

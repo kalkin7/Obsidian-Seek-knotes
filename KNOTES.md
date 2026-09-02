@@ -75,3 +75,24 @@ The 1.1.4 source and build were verified, and the isolated test-vault live check
 ```
 
 Do not use `vault=K_Notes` or the `obsidian` search command as part of this fork's verification.
+
+## Custom sidecar index folder
+
+Seek's Index settings now have a `Custom vault folder` option. Enter a vault-relative path such as `9_system/seek-index` in `sidecarIndexCustomPath`; absolute paths, `..`, and `.obsidian` are rejected. Existing `config` and `visible` choices are unchanged. The selected directory is captured on reload, and Seek moves the previous sidecar files before hydrate when possible, so changing the location does not require re-embedding. The sidecar file format and `search.ts`/`sidecar.ts` contracts are unchanged.
+
+This feature is intentionally isolated to `src/sidecar-path.ts` plus small hooks in `types.ts`, `settings-tab.ts`, and `main.ts`. When rebasing, resolve conflicts in those hooks while keeping upstream changes in the surrounding code. Do not hand-edit `knotes-patches/`; regenerate it from the resulting commits.
+
+## BRAT release checklist
+
+BRAT installs the GitHub Release assets, so a release must use a new tag matching `manifest.json.version` and must attach the CI-built `main.js`, `manifest.json`, and `styles.css`. From `knotes`:
+
+```powershell
+npm test
+npm run typecheck
+npm run build
+npm version patch
+# npm version updates package.json, manifest.json, and versions.json, then creates the tag
+git push origin knotes --follow-tags
+```
+
+The tag starts `.github/workflows/release.yml`, which creates a draft release. Review and publish that draft; then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.

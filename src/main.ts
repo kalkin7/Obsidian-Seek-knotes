@@ -22,6 +22,7 @@ import { LocalEmbedder, LOCAL_MODEL, LEGACY_ENGLISH_MODEL_ID, EMBEDDING_DIM } fr
 import { activeModelSpec, resolveOverrideSpec, evictStaleModelCaches, deleteModelCaches, probeModelDownloaded } from './model-registry';
 import { pluginIdentity, identityMatches, identityFromMeta } from './identity';
 import { sweepOrphanTmpFiles } from './sidecar';
+import { ensureVaultDirRecursive, readSidecarLastDir, resolveSidecarPath, selectSidecarArtifactPaths, writeSidecarLastDir } from './sidecar-path';
 import type { SeekSettings, IndexCompleteEntry, ModelDeliveryEntry } from './types';
 import { DEFAULT_SETTINGS, migrateSettings } from './types';
 import { IndexStore, indexDbPrefix } from './index-store';
@@ -339,6 +340,7 @@ export default class SeekPlugin extends Plugin {
         // its own vault-scoped localStorage; not in the public typings, hence
         // the cast. Vault name fallback keeps a (rename-fragile) scope if a
         // future Obsidian drops appId.
+        // SAFETY: Obsidian exposes appId at runtime but its public App type omits it.
         const appId = (this.app as unknown as { appId?: string }).appId;
         const vaultScope = appId ?? this.app.vault.getName();
         // Scope the DB by PLUGIN id too (indexDbPrefix), not just the vault, so a
@@ -464,7 +466,34 @@ export default class SeekPlugin extends Plugin {
                     && legacySidecarDir && legacySidecarDir !== sidecarIndexDir) {
                     await this.migrateSidecarFiles(legacySidecarDir, sidecarIndexDir);
                 }
-                if (this.settings.sidecarEnabled && sidecarIndexDir) await sweepOrphanTmpFiles(this.app.vault.adapter, sidecarIndexDir, this.logger.deviceId);
+                if (this.settings.sidecarEnabled && sidecarIndexDir) {
+                    // The orchestrator captures indexDir at construction. Move the
+                    // previous location first, so changing config/visible/custom does
+                    // not make an existing sidecar look like an empty index. The
+                    // localStorage breadcrumb is per device; on a device receiving a
+                    // synced custom setting for the first time, probe only the two
+                    // built-in legacy locations rather than guessing arbitrary paths.
+                    const previousDir = readSidecarLastDir(this.manifest.id, vaultScope);
+                    let migrationOk = true;
+                    if (previousDir && previousDir !== sidecarIndexDir) {
+                        migrationOk = await this.migrateSidecarFiles(previousDir, sidecarIndexDir);
+                    } else if (!previousDir && this.settings.sidecarIndexLocation === 'custom') {
+                        const knownSources = [legacySidecarDir, this.sidecarConfigDir, this.sidecarVisibleDir];
+                        for (const source of knownSources) {
+                            if (source && source !== sidecarIndexDir) {
+                                migrationOk = (await this.migrateSidecarFiles(source, sidecarIndexDir)) && migrationOk;
+                            }
+                        }
+                    }
+                    try {
+                        await ensureVaultDirRecursive(this.app.vault.adapter, sidecarIndexDir);
+                    } catch (e) {
+                        migrationOk = false;
+                        await this.logger.appendError('sidecar-ensure-dir', e).catch(() => {});
+                    }
+                    if (migrationOk) writeSidecarLastDir(this.manifest.id, vaultScope, sidecarIndexDir);
+                    await sweepOrphanTmpFiles(this.app.vault.adapter, sidecarIndexDir, this.logger.deviceId);
+                }
                 // Version-identity gate BEFORE any catch-up: if the local index was
                 // built under a different chunker/model/revision/dim than this build,
                 // it is stale — hydrate from a matching peer (embed-free) / desktop-
@@ -635,6 +664,8 @@ export default class SeekPlugin extends Plugin {
         // readable text list (rank/score/path/excerpt); `format=json` emits the
         // machine shape (path/title/score/excerpt), matching the predecessor
         // plugin so the same parsing works.
+        // SAFETY: registerCliHandler is supplied by the optional obsidian-cli bridge,
+        // which is absent from Obsidian's Plugin type and checked at runtime below.
         const registerCliHandler = (this as unknown as {
             registerCliHandler?: (
                 id: string,
@@ -855,31 +886,43 @@ export default class SeekPlugin extends Plugin {
     // Hidden literal path by default; the vault-root visible folder only when a
     // split-config Obsidian Sync user opts in (see maybeSteerSidecarLocation).
     private resolveSidecarIndexDir(): string {
-        return this.settings.sidecarIndexLocation === 'visible'
-            ? this.sidecarVisibleDir
-            : this.sidecarConfigDir;
+        return resolveSidecarPath(
+            this.settings.sidecarIndexLocation,
+            this.settings.sidecarIndexCustomPath,
+            this.sidecarConfigDir,
+            this.sidecarVisibleDir,
+        );
     }
 
-    // One-time rev-3→4 move of an index written under the old active-override
-    // path into the literal path. Uses rename (a move) per file; idempotent and
-    // non-fatal — a failed move leaves the source for the next reindex to
-    // repopulate, never aborts hydrate.
-    private async migrateSidecarFiles(from: string, to: string): Promise<void> {
+    // Move sidecar files before hydrate reads the selected directory. Uses rename
+    // per file; idempotent and non-fatal — a failed move leaves the source for a
+    // later boot/reindex rather than aborting hydrate.
+    private async migrateSidecarFiles(from: string, to: string): Promise<boolean> {
         const adapter = this.app.vault.adapter;
         const ls = await adapter.list(from).catch(() => null);
-        if (!ls || ls.files.length === 0) return; // nothing written under the old path
-        if (!(await adapter.exists(to).catch(() => false))) await adapter.mkdir(to).catch(() => {});
-        for (const path of ls.files) {
+        if (!ls || ls.files.length === 0) return true; // nothing written under the old path
+        try {
+            await ensureVaultDirRecursive(adapter, to);
+        } catch (e) {
+            await this.logger.appendError('sidecar-migrate-dir', e).catch(() => {});
+            return false;
+        }
+        let ok = true;
+        // A custom source may be an ordinary notes folder. Never move the
+        // user's notes or unrelated files while relocating Seek artifacts.
+        for (const path of selectSidecarArtifactPaths(ls.files)) {
             const dest = `${to}/${path.slice(path.lastIndexOf('/') + 1)}`;
             // Never clobber the new location (a prior partial migration, or this
-            // device already wrote there) — the literal path is authoritative.
+            // device already wrote there) — the destination is authoritative.
             if (await adapter.exists(dest).catch(() => false)) continue;
             try {
                 await adapter.rename(path, dest);
             } catch (e) {
+                ok = false;
                 await this.logger.appendError('sidecar-migrate-file', e).catch(() => {});
             }
         }
+        return ok;
     }
 
     // Steer the lone unreachable case to the visible folder: Obsidian Sync + a
@@ -935,6 +978,8 @@ export default class SeekPlugin extends Plugin {
         if (!shouldUnloadEmbedder(reason, gate)) return;
         this.embedder.teardown();
         this.modelLoadPromise = null;
+        // SAFETY: Chromium exposes the non-standard performance.memory shape; the
+        // standard lib intentionally does not declare it.
         const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
         void this.logger.append({
             type: 'model-lifecycle',
@@ -989,6 +1034,8 @@ export default class SeekPlugin extends Plugin {
                 // `?<ts>` cache-buster (seen in the app-local probe) —
                 // strip it so transformers.js path-joins
                 // `<base>/onnx/model_*.onnx` cleanly.
+                // SAFETY: getResourcePath exists on Obsidian's runtime adapter but is
+                // missing from the public DataAdapter type.
                 const ra = this.app.vault.adapter as unknown as { getResourcePath?: (p: string) => string };
                 const localBase = LOCAL_MODEL.enabled && ra.getResourcePath
                     ? ra.getResourcePath(LOCAL_MODEL.vaultRelPath).split('?')[0].replace(/\/+$/, '')
@@ -2219,6 +2266,8 @@ export default class SeekPlugin extends Plugin {
         interface PolyfillObserver {
             new(cb: (list: { getEntries(): PerformanceEntry[] }) => void): PerformanceObserver;
         }
+        // SAFETY: older/mobile WebViews may expose a compatible polyfill without
+        // advertising it in the DOM typings; the presence check guards the call.
         const Ctor = (window as unknown as { PerformanceObserver?: PolyfillObserver }).PerformanceObserver;
         if (!Ctor) return;
         try {
@@ -2231,6 +2280,8 @@ export default class SeekPlugin extends Plugin {
                     // one reading 'unknown'). The useful pair is one level up:
                     // `entry.name` says WHICH FRAME ('self' vs a descendant iframe),
                     // and TaskAttributionTiming's container* fields name that frame.
+                    // SAFETY: PerformanceLongTaskTiming's attribution entries are
+                    // browser-specific and not represented in the standard typings.
                     const attrSrc = entry as unknown as {
                         attribution?: Array<{
                             name?: string; containerType?: string;
@@ -2276,6 +2327,8 @@ export default class SeekPlugin extends Plugin {
     // lets us correlate "session ended abruptly" with "heap was at 240 MB".
     private wireMemoryPressureHandlers(): void {
         const emit = async (event: MemoryPressureEntry['event']) => {
+            // SAFETY: Chromium-only performance.memory is intentionally absent from
+            // the standard Performance interface; the null check handles other WebViews.
             const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
             const heapMB = heap ? heap.usedJSHeapSize / 1e6 : null;
             let storageMB: number | null = null;
@@ -2386,6 +2439,8 @@ export default class SeekPlugin extends Plugin {
             // (returns `app://local/...`) and Capacitor mobile (returns
             // `capacitor://localhost/...`). Either is the platform-correct
             // URL the iframe would need to use in Phase 3.
+            // SAFETY: Obsidian's runtime adapter may provide getResourcePath although
+            // the public DataAdapter type does not declare the optional method.
             const ra = adapter as unknown as { getResourcePath?: (p: string) => string };
             url = ra.getResourcePath ? ra.getResourcePath(PROBE_PATH) : '';
         } catch (e) {
@@ -2442,6 +2497,8 @@ export default class SeekPlugin extends Plugin {
                 storageQuotaMB = est.quota != null ? est.quota / 1e6 : null;
             } catch { /* swallow */ }
         }
+        // SAFETY: Chromium-only performance.memory is omitted from the standard
+        // Performance interface; the null check handles platforms without it.
         const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
         const heapMB = heap ? heap.usedJSHeapSize / 1e6 : null;
         const entry: StorageSnapshotEntry = {

@@ -531,11 +531,19 @@ export interface SeekSettings {
     // under uniform config. 'visible' = a vault-root 'Seek Index/' folder — the
     // one location that survives Obsidian Sync + a *renamed* config folder
     // (the renamed-config device never receives '.obsidian/' over Sync), at the
-    // cost of showing in the file-explorer pane. See the Sidecar Integration
-    // Plan §config-folder CRITICAL. Per-device-relevant but kept in synced
-    // data.json so the choice is explicit; the steer-notice only fires on the
-    // device whose config is actually renamed.
+    // cost of showing in the file-explorer pane. 'custom' uses the separate
+    // vault-relative sidecarIndexCustomPath field (for example
+    // '9_system/seek-index'); it never accepts an absolute path or '..'.
+    // See the Sidecar Integration Plan §config-folder CRITICAL. Per-device-
+    // relevant but kept in synced data.json so every device selects the same
+    // folder. The custom path is deliberately outside '.obsidian' so it does
+    // not recreate the split-config Sync trap.
     sidecarIndexLocation: SidecarIndexLocation;
+
+    // Used only when sidecarIndexLocation is 'custom'. Stored normalized with
+    // POSIX separators as a vault-relative folder path. The default is a useful
+    // K_Notes-style destination; existing installs remain on 'config'.
+    sidecarIndexCustomPath: string;
 
     // Settings-schema revision, persisted in data.json so onload can run
     // one-time migrations. Rev 2 = the 2026-06-09 bound-norm switch: persisted
@@ -571,7 +579,8 @@ export type AltOpenLocation = 'tab' | 'split' | 'window';
 // 'config'  = hidden literal '.obsidian/plugins/seek/index' (default; covers
 //             iCloud/Syncthing at any config naming + Obsidian Sync uniform config)
 // 'visible' = vault-root 'Seek Index/' (the Obsidian-Sync-renamed-config carve-out)
-export type SidecarIndexLocation = 'config' | 'visible';
+// 'custom'  = the vault-relative folder in sidecarIndexCustomPath
+export type SidecarIndexLocation = 'config' | 'visible' | 'custom';
 
 export const DEFAULT_SETTINGS: SeekSettings = {
     denseWeight: 0.85,         // BOUND-NORM scale dense weight; mirrors DEFAULT_RANKING_CONFIG.alpha. Raised 0.80→0.85 (2026-06-27 re-eval): de-franken made BM25 more assertive, so a fixed α=0.80 over-weighted lexical; 0.85 is a cross-corpus win (Example Vault flat-to-+, BEIR +0.01–0.02). Migrated via rev 8. (NOT the 0.92 empirical-max point)
@@ -595,8 +604,9 @@ export const DEFAULT_SETTINGS: SeekSettings = {
     showHotkeyHints: true,     // ON: show the modal footer keyboard-hint bar + result counter; OFF = full-results-only modal
     altOpenLocation: 'tab',    // ⌘/Ctrl open target (tab/split/window); 'tab' preserves the historical background-new-tab fan-out. New key, no migration: Object.assign backfills
     sidecarEnabled: true,      // ON (hidden) per the 2026-06-19 ratification; vault-file index persistence for iOS-eviction survival + cross-device sync; only Index location stays user-facing; seeds on next reindex — see field comment
-    sidecarIndexLocation: 'config', // hidden literal '.obsidian/plugins/seek/index'; 'visible' = vault-root 'Seek Index/' for split-config Obsidian Sync; see field comment
-    settingsRev: 9,            // current schema rev; bump alongside a migration in main.ts onload (rev 9 = 2026-07-16 Recency High half-life 270→90)
+    sidecarIndexLocation: 'config', // hidden literal '.obsidian/plugins/seek/index'; 'visible' = vault-root 'Seek Index/'; 'custom' = sidecarIndexCustomPath
+    sidecarIndexCustomPath: '9_system/seek-index', // useful K_Notes destination; existing installs remain on config
+    settingsRev: 9,            // current schema rev; custom-path is additive and uses Object.assign backfill
 };
 
 // One-time settings migrations, keyed on the persisted settingsRev. Applied to the
@@ -726,6 +736,8 @@ export interface HeapMB {
 // { mb: null, available: false } — every "Heap Δ" field in the report is
 // blank there. See MemorySnapshot below for the iOS-friendly proxy.
 export function snapshotHeap(): HeapMB {
+    // SAFETY: Chromium exposes the non-standard `performance.memory` shape at runtime;
+    // TypeScript's standard lib intentionally omits it, so this narrows that runtime API.
     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
     if (!mem) return { mb: null, available: false };
     return { mb: mem.usedJSHeapSize / 1e6, available: true };
@@ -753,7 +765,7 @@ export async function snapshotMemory(): Promise<MemorySnapshot> {
     if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
         try {
             const est = await navigator.storage.estimate();
-            storageMB = est.usage != null ? est.usage / 1e6 : null;
+            storageMB = est.usage == null ? null : est.usage / 1e6;
         } catch { /* swallow */ }
     }
     return {

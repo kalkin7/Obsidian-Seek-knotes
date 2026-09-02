@@ -1,0 +1,546 @@
+From 3b2d25abc334772d0586f81ea671c2789cab1f39 Mon Sep 17 00:00:00 2001
+From: kalkin7 <kalkin7@gmail.com>
+Date: Wed, 2 Sep 2026 14:00:39 +0900
+Subject: [PATCH] feat: allow custom sidecar index folder
+
+---
+ .github/workflows/ci.yml |  2 +-
+ KNOTES.md                | 21 ++++++++++
+ src/main.ts              | 83 +++++++++++++++++++++++++++++++------
+ src/settings-tab.ts      | 30 +++++++++++++-
+ src/sidecar-path.test.ts | 74 +++++++++++++++++++++++++++++++++
+ src/sidecar-path.ts      | 88 ++++++++++++++++++++++++++++++++++++++++
+ src/types.ts             | 28 +++++++++----
+ 7 files changed, 303 insertions(+), 23 deletions(-)
+ create mode 100644 src/sidecar-path.test.ts
+ create mode 100644 src/sidecar-path.ts
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index fa88966..7939063 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -2,7 +2,7 @@ name: CI
+ 
+ on:
+   push:
+-    branches: [main]
++    branches: [main, knotes]
+   pull_request:
+ 
+ jobs:
+diff --git a/KNOTES.md b/KNOTES.md
+index 5b5578e..b1b1075 100644
+--- a/KNOTES.md
++++ b/KNOTES.md
+@@ -75,3 +75,24 @@ The 1.1.4 source and build were verified, and the isolated test-vault live check
+ ```
+ 
+ Do not use `vault=K_Notes` or the `obsidian` search command as part of this fork's verification.
++
++## Custom sidecar index folder
++
++Seek's Index settings now have a `Custom vault folder` option. Enter a vault-relative path such as `9_system/seek-index` in `sidecarIndexCustomPath`; absolute paths, `..`, and `.obsidian` are rejected. Existing `config` and `visible` choices are unchanged. The selected directory is captured on reload, and Seek moves the previous sidecar files before hydrate when possible, so changing the location does not require re-embedding. The sidecar file format and `search.ts`/`sidecar.ts` contracts are unchanged.
++
++This feature is intentionally isolated to `src/sidecar-path.ts` plus small hooks in `types.ts`, `settings-tab.ts`, and `main.ts`. When rebasing, resolve conflicts in those hooks while keeping upstream changes in the surrounding code. Do not hand-edit `knotes-patches/`; regenerate it from the resulting commits.
++
++## BRAT release checklist
++
++BRAT installs the GitHub Release assets, so a release must use a new tag matching `manifest.json.version` and must attach the CI-built `main.js`, `manifest.json`, and `styles.css`. From `knotes`:
++
++```powershell
++npm test
++npm run typecheck
++npm run build
++npm version patch
++# npm version updates package.json, manifest.json, and versions.json, then creates the tag
++git push origin knotes --follow-tags
++```
++
++The tag starts `.github/workflows/release.yml`, which creates a draft release. Review and publish that draft; then add `kalkin7/Obsidian-Seek-knotes` to BRAT. Keep the plugin id `seek`, and never reuse an already-published version. If upstream uses the same version after a rebase, bump the fork to the next patch version before releasing. The fork's release is intentionally separate from upstream and must not overwrite the production K_Notes installation.
+diff --git a/src/main.ts b/src/main.ts
+index b2dc05c..5d9d471 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -22,6 +22,7 @@ import { LocalEmbedder, LOCAL_MODEL, LEGACY_ENGLISH_MODEL_ID, EMBEDDING_DIM } fr
+ import { activeModelSpec, resolveOverrideSpec, evictStaleModelCaches, deleteModelCaches, probeModelDownloaded } from './model-registry';
+ import { pluginIdentity, identityMatches, identityFromMeta } from './identity';
+ import { sweepOrphanTmpFiles } from './sidecar';
++import { ensureVaultDirRecursive, readSidecarLastDir, resolveSidecarPath, selectSidecarArtifactPaths, writeSidecarLastDir } from './sidecar-path';
+ import type { SeekSettings, IndexCompleteEntry, ModelDeliveryEntry } from './types';
+ import { DEFAULT_SETTINGS, migrateSettings } from './types';
+ import { IndexStore, indexDbPrefix } from './index-store';
+@@ -339,6 +340,7 @@ export default class SeekPlugin extends Plugin {
+         // its own vault-scoped localStorage; not in the public typings, hence
+         // the cast. Vault name fallback keeps a (rename-fragile) scope if a
+         // future Obsidian drops appId.
++        // SAFETY: Obsidian exposes appId at runtime but its public App type omits it.
+         const appId = (this.app as unknown as { appId?: string }).appId;
+         const vaultScope = appId ?? this.app.vault.getName();
+         // Scope the DB by PLUGIN id too (indexDbPrefix), not just the vault, so a
+@@ -464,7 +466,34 @@ export default class SeekPlugin extends Plugin {
+                     && legacySidecarDir && legacySidecarDir !== sidecarIndexDir) {
+                     await this.migrateSidecarFiles(legacySidecarDir, sidecarIndexDir);
+                 }
+-                if (this.settings.sidecarEnabled && sidecarIndexDir) await sweepOrphanTmpFiles(this.app.vault.adapter, sidecarIndexDir, this.logger.deviceId);
++                if (this.settings.sidecarEnabled && sidecarIndexDir) {
++                    // The orchestrator captures indexDir at construction. Move the
++                    // previous location first, so changing config/visible/custom does
++                    // not make an existing sidecar look like an empty index. The
++                    // localStorage breadcrumb is per device; on a device receiving a
++                    // synced custom setting for the first time, probe only the two
++                    // built-in legacy locations rather than guessing arbitrary paths.
++                    const previousDir = readSidecarLastDir(this.manifest.id, vaultScope);
++                    let migrationOk = true;
++                    if (previousDir && previousDir !== sidecarIndexDir) {
++                        migrationOk = await this.migrateSidecarFiles(previousDir, sidecarIndexDir);
++                    } else if (!previousDir && this.settings.sidecarIndexLocation === 'custom') {
++                        const knownSources = [legacySidecarDir, this.sidecarConfigDir, this.sidecarVisibleDir];
++                        for (const source of knownSources) {
++                            if (source && source !== sidecarIndexDir) {
++                                migrationOk = (await this.migrateSidecarFiles(source, sidecarIndexDir)) && migrationOk;
++                            }
++                        }
++                    }
++                    try {
++                        await ensureVaultDirRecursive(this.app.vault.adapter, sidecarIndexDir);
++                    } catch (e) {
++                        migrationOk = false;
++                        await this.logger.appendError('sidecar-ensure-dir', e).catch(() => {});
++                    }
++                    if (migrationOk) writeSidecarLastDir(this.manifest.id, vaultScope, sidecarIndexDir);
++                    await sweepOrphanTmpFiles(this.app.vault.adapter, sidecarIndexDir, this.logger.deviceId);
++                }
+                 // Version-identity gate BEFORE any catch-up: if the local index was
+                 // built under a different chunker/model/revision/dim than this build,
+                 // it is stale — hydrate from a matching peer (embed-free) / desktop-
+@@ -635,6 +664,8 @@ export default class SeekPlugin extends Plugin {
+         // readable text list (rank/score/path/excerpt); `format=json` emits the
+         // machine shape (path/title/score/excerpt), matching the predecessor
+         // plugin so the same parsing works.
++        // SAFETY: registerCliHandler is supplied by the optional obsidian-cli bridge,
++        // which is absent from Obsidian's Plugin type and checked at runtime below.
+         const registerCliHandler = (this as unknown as {
+             registerCliHandler?: (
+                 id: string,
+@@ -855,31 +886,43 @@ export default class SeekPlugin extends Plugin {
+     // Hidden literal path by default; the vault-root visible folder only when a
+     // split-config Obsidian Sync user opts in (see maybeSteerSidecarLocation).
+     private resolveSidecarIndexDir(): string {
+-        return this.settings.sidecarIndexLocation === 'visible'
+-            ? this.sidecarVisibleDir
+-            : this.sidecarConfigDir;
++        return resolveSidecarPath(
++            this.settings.sidecarIndexLocation,
++            this.settings.sidecarIndexCustomPath,
++            this.sidecarConfigDir,
++            this.sidecarVisibleDir,
++        );
+     }
+ 
+-    // One-time rev-3→4 move of an index written under the old active-override
+-    // path into the literal path. Uses rename (a move) per file; idempotent and
+-    // non-fatal — a failed move leaves the source for the next reindex to
+-    // repopulate, never aborts hydrate.
+-    private async migrateSidecarFiles(from: string, to: string): Promise<void> {
++    // Move sidecar files before hydrate reads the selected directory. Uses rename
++    // per file; idempotent and non-fatal — a failed move leaves the source for a
++    // later boot/reindex rather than aborting hydrate.
++    private async migrateSidecarFiles(from: string, to: string): Promise<boolean> {
+         const adapter = this.app.vault.adapter;
+         const ls = await adapter.list(from).catch(() => null);
+-        if (!ls || ls.files.length === 0) return; // nothing written under the old path
+-        if (!(await adapter.exists(to).catch(() => false))) await adapter.mkdir(to).catch(() => {});
+-        for (const path of ls.files) {
++        if (!ls || ls.files.length === 0) return true; // nothing written under the old path
++        try {
++            await ensureVaultDirRecursive(adapter, to);
++        } catch (e) {
++            await this.logger.appendError('sidecar-migrate-dir', e).catch(() => {});
++            return false;
++        }
++        let ok = true;
++        // A custom source may be an ordinary notes folder. Never move the
++        // user's notes or unrelated files while relocating Seek artifacts.
++        for (const path of selectSidecarArtifactPaths(ls.files)) {
+             const dest = `${to}/${path.slice(path.lastIndexOf('/') + 1)}`;
+             // Never clobber the new location (a prior partial migration, or this
+-            // device already wrote there) — the literal path is authoritative.
++            // device already wrote there) — the destination is authoritative.
+             if (await adapter.exists(dest).catch(() => false)) continue;
+             try {
+                 await adapter.rename(path, dest);
+             } catch (e) {
++                ok = false;
+                 await this.logger.appendError('sidecar-migrate-file', e).catch(() => {});
+             }
+         }
++        return ok;
+     }
+ 
+     // Steer the lone unreachable case to the visible folder: Obsidian Sync + a
+@@ -935,6 +978,8 @@ export default class SeekPlugin extends Plugin {
+         if (!shouldUnloadEmbedder(reason, gate)) return;
+         this.embedder.teardown();
+         this.modelLoadPromise = null;
++        // SAFETY: Chromium exposes the non-standard performance.memory shape; the
++        // standard lib intentionally does not declare it.
+         const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+         void this.logger.append({
+             type: 'model-lifecycle',
+@@ -989,6 +1034,8 @@ export default class SeekPlugin extends Plugin {
+                 // `?<ts>` cache-buster (seen in the app-local probe) —
+                 // strip it so transformers.js path-joins
+                 // `<base>/onnx/model_*.onnx` cleanly.
++                // SAFETY: getResourcePath exists on Obsidian's runtime adapter but is
++                // missing from the public DataAdapter type.
+                 const ra = this.app.vault.adapter as unknown as { getResourcePath?: (p: string) => string };
+                 const localBase = LOCAL_MODEL.enabled && ra.getResourcePath
+                     ? ra.getResourcePath(LOCAL_MODEL.vaultRelPath).split('?')[0].replace(/\/+$/, '')
+@@ -2219,6 +2266,8 @@ export default class SeekPlugin extends Plugin {
+         interface PolyfillObserver {
+             new(cb: (list: { getEntries(): PerformanceEntry[] }) => void): PerformanceObserver;
+         }
++        // SAFETY: older/mobile WebViews may expose a compatible polyfill without
++        // advertising it in the DOM typings; the presence check guards the call.
+         const Ctor = (window as unknown as { PerformanceObserver?: PolyfillObserver }).PerformanceObserver;
+         if (!Ctor) return;
+         try {
+@@ -2231,6 +2280,8 @@ export default class SeekPlugin extends Plugin {
+                     // one reading 'unknown'). The useful pair is one level up:
+                     // `entry.name` says WHICH FRAME ('self' vs a descendant iframe),
+                     // and TaskAttributionTiming's container* fields name that frame.
++                    // SAFETY: PerformanceLongTaskTiming's attribution entries are
++                    // browser-specific and not represented in the standard typings.
+                     const attrSrc = entry as unknown as {
+                         attribution?: Array<{
+                             name?: string; containerType?: string;
+@@ -2276,6 +2327,8 @@ export default class SeekPlugin extends Plugin {
+     // lets us correlate "session ended abruptly" with "heap was at 240 MB".
+     private wireMemoryPressureHandlers(): void {
+         const emit = async (event: MemoryPressureEntry['event']) => {
++            // SAFETY: Chromium-only performance.memory is intentionally absent from
++            // the standard Performance interface; the null check handles other WebViews.
+             const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+             const heapMB = heap ? heap.usedJSHeapSize / 1e6 : null;
+             let storageMB: number | null = null;
+@@ -2386,6 +2439,8 @@ export default class SeekPlugin extends Plugin {
+             // (returns `app://local/...`) and Capacitor mobile (returns
+             // `capacitor://localhost/...`). Either is the platform-correct
+             // URL the iframe would need to use in Phase 3.
++            // SAFETY: Obsidian's runtime adapter may provide getResourcePath although
++            // the public DataAdapter type does not declare the optional method.
+             const ra = adapter as unknown as { getResourcePath?: (p: string) => string };
+             url = ra.getResourcePath ? ra.getResourcePath(PROBE_PATH) : '';
+         } catch (e) {
+@@ -2442,6 +2497,8 @@ export default class SeekPlugin extends Plugin {
+                 storageQuotaMB = est.quota != null ? est.quota / 1e6 : null;
+             } catch { /* swallow */ }
+         }
++        // SAFETY: Chromium-only performance.memory is omitted from the standard
++        // Performance interface; the null check handles platforms without it.
+         const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+         const heapMB = heap ? heap.usedJSHeapSize / 1e6 : null;
+         const entry: StorageSnapshotEntry = {
+diff --git a/src/settings-tab.ts b/src/settings-tab.ts
+index 3447dff..c62a762 100644
+--- a/src/settings-tab.ts
++++ b/src/settings-tab.ts
+@@ -19,6 +19,7 @@ import type SeekPlugin from './main';
+ import type { IndexStats, ModelStatus } from './main';
+ import type { AltOpenLocation, SidecarIndexLocation } from './types';
+ import { DEFAULT_SETTINGS, MATCH_STRENGTH_MIN_NOTES } from './types';
++import { parseSidecarCustomPath } from './sidecar-path';
+ import {
+     getBackendOverride, setBackendOverride, isWebgpuDemoted, clearWebgpuDemoted,
+     type BackendChoice,
+@@ -279,16 +280,43 @@ export class SeekSettingTab extends PluginSettingTab {
+         const locRoot = locList.createEl('li');
+         locRoot.createEl('strong', { text: 'Vault root: ' });
+         locRoot.createSpan({ text: 'a visible "Seek Index" folder will appear in your vault. Choose this only if you use Obsidian Sync with a mobile or tablet override config folder.' });
+-        indexLoc.descEl.createDiv({ text: 'Takes effect after reloading Seek.' });
++        const locCustom = locList.createEl('li');
++        locCustom.createEl('strong', { text: 'Custom: ' });
++        locCustom.createSpan({ text: 'a folder you choose inside the vault, such as 9_system/seek-index. Use a dedicated folder for Seek files.' });
++        indexLoc.descEl.createDiv({ text: 'Takes effect after reloading Seek. Existing sidecar files move to the new folder when possible.' });
+         indexLoc.addDropdown(dd => dd
+             .addOption('config', `Hidden (.obsidian, recommended)`)
+             .addOption('visible', 'Vault root (Seek Index/)')
++            .addOption('custom', 'Custom vault folder')
+             .setValue(this.s.sidecarIndexLocation)
+             .onChange(async v => {
+                 this.s.sidecarIndexLocation = v as SidecarIndexLocation;
+                 await this.save();
++                this.rerender();
+                 new Notice('Seek: index location changed — reload Seek (or restart Obsidian) for it to take effect.', 8000);
+             }));
++
++        if (this.s.sidecarIndexLocation === 'custom') {
++            new Setting(adv)
++                .setName('Custom index folder')
++                .setDesc('Vault-relative path only. Absolute paths, .., and .obsidian are not allowed. Saved when you leave the field.')
++                .addText(text => {
++                    text.setPlaceholder('9_system/seek-index').setValue(this.s.sidecarIndexCustomPath);
++                    text.inputEl.addEventListener('blur', () => {
++                        const normalized = parseSidecarCustomPath(text.getValue());
++                        if (!normalized) {
++                            text.setValue(this.s.sidecarIndexCustomPath);
++                            new Notice('Seek: enter a safe vault-relative folder path (for example 9_system/seek-index).', 5000);
++                            return;
++                        }
++                        if (normalized === this.s.sidecarIndexCustomPath) return;
++                        this.s.sidecarIndexCustomPath = normalized;
++                        void this.save().then(() => {
++                            new Notice('Seek: custom index folder saved — reload Seek for it to take effect.', 6000);
++                        });
++                    });
++                });
++        }
+     }
+ 
+     private renderStatusCard(containerEl: HTMLElement): void {
+diff --git a/src/sidecar-path.test.ts b/src/sidecar-path.test.ts
+new file mode 100644
+index 0000000..e437adc
+--- /dev/null
++++ b/src/sidecar-path.test.ts
+@@ -0,0 +1,74 @@
++import { describe, expect, it } from 'vitest';
++import { isSidecarArtifactPath, parseSidecarCustomPath, ensureVaultDirRecursive, resolveSidecarPath, selectSidecarArtifactPaths } from './sidecar-path';
++import type { SidecarIndexLocation } from './types';
++
++describe('parseSidecarCustomPath', () => {
++    it('normalizes Windows separators and repeated/trailing separators', () => {
++        expect(parseSidecarCustomPath('  9_system\\seek-index\\  ')).toBe('9_system/seek-index');
++        expect(parseSidecarCustomPath('9_system//seek-index')).toBe('9_system/seek-index');
++    });
++
++    it.each([
++        '',
++        '   ',
++        '../outside',
++        '9_system/../outside',
++        './9_system',
++        '/absolute/path',
++        '\\absolute\\path',
++        '//server/share',
++        'C:\\outside',
++        '.obsidian/custom',
++        '9_system:bad',
++        '9_system\0bad',
++    ])('rejects unsafe path %j', path => {
++        expect(parseSidecarCustomPath(path)).toBeNull();
++    });
++
++    it('accepts a Unicode vault-relative folder', () => {
++        expect(parseSidecarCustomPath('9_system/검색 인덱스')).toBe('9_system/검색 인덱스');
++    });
++});
++
++describe('isSidecarArtifactPath', () => {
++    it('moves only exact Seek artifacts and atomic-write temps', () => {
++        expect(isSidecarArtifactPath('9_system/index.desktop-abc.jsonl')).toBe(true);
++        expect(isSidecarArtifactPath('9_system/embeddings.desktop-abc.0.bin.tmp')).toBe(true);
++        expect(isSidecarArtifactPath('9_system/meta.desktop-abc.json')).toBe(true);
++        expect(isSidecarArtifactPath('9_system/bm25.desktop-abc.json.gz')).toBe(true);
++        expect(isSidecarArtifactPath('9_system/Note.md')).toBe(false);
++        expect(isSidecarArtifactPath('9_system/index.desktop-abc 2.jsonl')).toBe(false);
++        expect(selectSidecarArtifactPaths([
++            '9_system/index.desktop-abc.jsonl',
++            '9_system/Note.md',
++            '9_system/meta.desktop-abc.json',
++        ])).toEqual(['9_system/index.desktop-abc.jsonl', '9_system/meta.desktop-abc.json']);
++    });
++});
++
++describe('resolveSidecarPath', () => {
++    const config = '.obsidian/plugins/seek/index';
++    const visible = 'Seek Index';
++
++    it.each([
++        ['config', '9_system/other', config],
++        ['visible', '9_system/other', visible],
++        ['custom', '9_system/seek-index', '9_system/seek-index'],
++        ['custom', '../outside', config],
++    ] as Array<[SidecarIndexLocation, string, string]>)('resolves %s safely', (location, customPath, expected) => {
++        expect(resolveSidecarPath(location, customPath, config, visible)).toBe(expected);
++    });
++});
++
++describe('ensureVaultDirRecursive', () => {
++    it('creates missing parent folders before the leaf', async () => {
++        const folders = new Set<string>();
++        const adapter = {
++            exists: async (path: string) => folders.has(path),
++            mkdir: async (path: string) => { folders.add(path); },
++        };
++
++        await ensureVaultDirRecursive(adapter, '9_system/seek-index');
++        expect([...folders]).toEqual(['9_system', '9_system/seek-index']);
++    });
++});
+diff --git a/src/sidecar-path.ts b/src/sidecar-path.ts
+new file mode 100644
+index 0000000..0186995
+--- /dev/null
++++ b/src/sidecar-path.ts
+@@ -0,0 +1,88 @@
++import type { DataAdapter } from 'obsidian';
++import type { SidecarIndexLocation } from './types';
++
++/**
++ * Normalize and validate a user-supplied vault-relative sidecar directory.
++ *
++ * Obsidian adapters use POSIX-style vault paths even on Windows. Keeping this
++ * contract here makes the settings UI and the boot-time resolver agree, and
++ * prevents a custom setting from escaping the vault through an absolute path
++ * or `..` segment.
++ */
++function parseVaultRelativePath(value: unknown): string | null {
++    if (typeof value !== 'string') return null;
++
++    const raw = value.trim().replaceAll('\\', '/');
++    if (!raw || raw.startsWith('/') || raw.startsWith('//') || /^[A-Za-z]:/.test(raw)) return null;
++    if (raw.includes('\u0000') || [...raw].some(ch => ch.charCodeAt(0) < 0x20)) return null;
++
++    const parts = raw.split('/').filter(Boolean);
++    if (parts.length === 0 || parts.length > 8) return null;
++    if (parts.some(part => part === '.' || part === '..' || part.includes(':'))) return null;
++    if (parts.some(part => part.length > 180)) return null;
++
++    return parts.join('/');
++}
++
++export function parseSidecarCustomPath(value: unknown): string | null {
++    const normalized = parseVaultRelativePath(value);
++    if (!normalized) return null;
++    const first = normalized.split('/')[0];
++    // A custom path is the visible-vault escape hatch. Keep .obsidian behind
++    // the explicit built-in `config` choice so split-config Sync semantics do
++    // not silently return through the custom setting.
++    return first === '.obsidian' ? null : normalized;
++}
++
++/** Resolve a persisted location, with malformed runtime data safely on config. */
++export function resolveSidecarPath(
++    location: SidecarIndexLocation,
++    customPath: unknown,
++    configDir: string,
++    visibleDir: string,
++): string {
++    if (location === 'visible') return visibleDir;
++    if (location === 'custom') return parseSidecarCustomPath(customPath) ?? configDir;
++    return configDir;
++}
++
++/** Return true only for Seek's exact sidecar artifacts (including atomic-write temps). */
++export function isSidecarArtifactPath(path: string): boolean {
++    const name = path.slice(path.lastIndexOf('/') + 1);
++    return /^(?:embeddings\.[A-Za-z0-9-]+\.\d+\.bin|index\.[A-Za-z0-9-]+\.jsonl|meta\.[A-Za-z0-9-]+\.json|bm25\.[A-Za-z0-9-]+\.json\.gz)(?:\.tmp)?$/.test(name);
++}
++
++export function selectSidecarArtifactPaths(paths: string[]): string[] {
++    return paths.filter(isSidecarArtifactPath);
++}
++
++/** Create missing parent folders one segment at a time. */
++export async function ensureVaultDirRecursive(adapter: Pick<DataAdapter, 'exists' | 'mkdir'>, dir: string): Promise<void> {
++    let current = '';
++    for (const segment of dir.split('/').filter(Boolean)) {
++        current = current ? `${current}/${segment}` : segment;
++        if (!(await adapter.exists(current))) await adapter.mkdir(current);
++    }
++}
++
++/** Stable per-plugin/per-vault key for the last resolved sidecar directory. */
++export function sidecarLastDirKey(pluginId: string, vaultScope: string): string {
++    return `${pluginId}:${vaultScope}-sidecar-last-dir`;
++}
++
++export function readSidecarLastDir(pluginId: string, vaultScope: string): string | null {
++    try {
++        return parseVaultRelativePath(window.localStorage.getItem(sidecarLastDirKey(pluginId, vaultScope)));
++    } catch {
++        return null;
++    }
++}
++
++export function writeSidecarLastDir(pluginId: string, vaultScope: string, dir: string): void {
++    try {
++        window.localStorage.setItem(sidecarLastDirKey(pluginId, vaultScope), dir);
++    } catch {
++        // localStorage can be unavailable in restricted WebViews. The sidecar
++        // itself remains functional; this only forfeits path-change migration.
++    }
++}
+diff --git a/src/types.ts b/src/types.ts
+index 6d2ec07..1550c8f 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -531,12 +531,20 @@ export interface SeekSettings {
+     // under uniform config. 'visible' = a vault-root 'Seek Index/' folder — the
+     // one location that survives Obsidian Sync + a *renamed* config folder
+     // (the renamed-config device never receives '.obsidian/' over Sync), at the
+-    // cost of showing in the file-explorer pane. See the Sidecar Integration
+-    // Plan §config-folder CRITICAL. Per-device-relevant but kept in synced
+-    // data.json so the choice is explicit; the steer-notice only fires on the
+-    // device whose config is actually renamed.
++    // cost of showing in the file-explorer pane. 'custom' uses the separate
++    // vault-relative sidecarIndexCustomPath field (for example
++    // '9_system/seek-index'); it never accepts an absolute path or '..'.
++    // See the Sidecar Integration Plan §config-folder CRITICAL. Per-device-
++    // relevant but kept in synced data.json so every device selects the same
++    // folder. The custom path is deliberately outside '.obsidian' so it does
++    // not recreate the split-config Sync trap.
+     sidecarIndexLocation: SidecarIndexLocation;
+ 
++    // Used only when sidecarIndexLocation is 'custom'. Stored normalized with
++    // POSIX separators as a vault-relative folder path. The default is a useful
++    // K_Notes-style destination; existing installs remain on 'config'.
++    sidecarIndexCustomPath: string;
++
+     // Settings-schema revision, persisted in data.json so onload can run
+     // one-time migrations. Rev 2 = the 2026-06-09 bound-norm switch: persisted
+     // pre-bound denseWeight values (0.90/0.92, empirical-max scale) are on a
+@@ -571,7 +579,8 @@ export type AltOpenLocation = 'tab' | 'split' | 'window';
+ // 'config'  = hidden literal '.obsidian/plugins/seek/index' (default; covers
+ //             iCloud/Syncthing at any config naming + Obsidian Sync uniform config)
+ // 'visible' = vault-root 'Seek Index/' (the Obsidian-Sync-renamed-config carve-out)
+-export type SidecarIndexLocation = 'config' | 'visible';
++// 'custom'  = the vault-relative folder in sidecarIndexCustomPath
++export type SidecarIndexLocation = 'config' | 'visible' | 'custom';
+ 
+ export const DEFAULT_SETTINGS: SeekSettings = {
+     denseWeight: 0.85,         // BOUND-NORM scale dense weight; mirrors DEFAULT_RANKING_CONFIG.alpha. Raised 0.80→0.85 (2026-06-27 re-eval): de-franken made BM25 more assertive, so a fixed α=0.80 over-weighted lexical; 0.85 is a cross-corpus win (Example Vault flat-to-+, BEIR +0.01–0.02). Migrated via rev 8. (NOT the 0.92 empirical-max point)
+@@ -595,8 +604,9 @@ export const DEFAULT_SETTINGS: SeekSettings = {
+     showHotkeyHints: true,     // ON: show the modal footer keyboard-hint bar + result counter; OFF = full-results-only modal
+     altOpenLocation: 'tab',    // ⌘/Ctrl open target (tab/split/window); 'tab' preserves the historical background-new-tab fan-out. New key, no migration: Object.assign backfills
+     sidecarEnabled: true,      // ON (hidden) per the 2026-06-19 ratification; vault-file index persistence for iOS-eviction survival + cross-device sync; only Index location stays user-facing; seeds on next reindex — see field comment
+-    sidecarIndexLocation: 'config', // hidden literal '.obsidian/plugins/seek/index'; 'visible' = vault-root 'Seek Index/' for split-config Obsidian Sync; see field comment
+-    settingsRev: 9,            // current schema rev; bump alongside a migration in main.ts onload (rev 9 = 2026-07-16 Recency High half-life 270→90)
++    sidecarIndexLocation: 'config', // hidden literal '.obsidian/plugins/seek/index'; 'visible' = vault-root 'Seek Index/'; 'custom' = sidecarIndexCustomPath
++    sidecarIndexCustomPath: '9_system/seek-index', // useful K_Notes destination; existing installs remain on config
++    settingsRev: 9,            // current schema rev; custom-path is additive and uses Object.assign backfill
+ };
+ 
+ // One-time settings migrations, keyed on the persisted settingsRev. Applied to the
+@@ -726,6 +736,8 @@ export interface HeapMB {
+ // { mb: null, available: false } — every "Heap Δ" field in the report is
+ // blank there. See MemorySnapshot below for the iOS-friendly proxy.
+ export function snapshotHeap(): HeapMB {
++    // SAFETY: Chromium exposes the non-standard `performance.memory` shape at runtime;
++    // TypeScript's standard lib intentionally omits it, so this narrows that runtime API.
+     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+     if (!mem) return { mb: null, available: false };
+     return { mb: mem.usedJSHeapSize / 1e6, available: true };
+@@ -753,7 +765,7 @@ export async function snapshotMemory(): Promise<MemorySnapshot> {
+     if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+         try {
+             const est = await navigator.storage.estimate();
+-            storageMB = est.usage != null ? est.usage / 1e6 : null;
++            storageMB = est.usage == null ? null : est.usage / 1e6;
+         } catch { /* swallow */ }
+     }
+     return {
+-- 
+2.55.0.windows.3
+

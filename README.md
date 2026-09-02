@@ -28,6 +28,12 @@ The user guide for seek can be found [here](https://publish.obsidian.md/rmm/Seek
 
 ### Custom index location
 
+To keep Seek's synced index files with other system files, open **Settings → Seek → Index → Advanced settings** and choose **Custom vault folder**. Enter a vault-relative folder such as 9_system/seek-index, then reload Seek. Existing sidecar files are moved to the new folder when possible, without rebuilding embeddings.
+
+The path must stay inside the vault: absolute paths, .., and .obsidian (including case variants) are rejected. Use a dedicated subfolder rather than placing index files beside ordinary notes. Existing Hidden (.obsidian) and Vault root (Seek Index/) choices continue to work unchanged.
+
+### Custom index location
+
 To keep Seek's synced index files with other system files, open **Settings → Seek → Index → Advanced settings** and choose **Custom vault folder**. Enter a vault-relative folder such as `9_system/seek-index`, then reload Seek. Existing sidecar files are moved to the new folder when possible, without rebuilding embeddings.
 
 The path must stay inside the vault: absolute paths, `..`, and `.obsidian` (including case variants) are rejected. Use a dedicated subfolder rather than placing index files beside ordinary notes. Existing Hidden (`.obsidian`) and Vault root (`Seek Index/`) choices continue to work unchanged.
